@@ -1,0 +1,28 @@
+#include "/Engine/Public/Platform.ush"
+
+uint IndexCount;
+uint InstanceCount;
+//float3 Origin;
+RWStructuredBuffer<float4> InstanceOriginBuffer;
+RWStructuredBuffer<float4> InstanceTransformBuffer;
+RWStructuredBuffer<uint> IndirectArgsBuffer;
+
+[numthreads(32,1,1)]
+void MainCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID
+)
+{
+	if(DispatchThreadId.x == 0)
+	{
+		IndirectArgsBuffer[0] = IndexCount;
+		IndirectArgsBuffer[1] = InstanceCount;
+		IndirectArgsBuffer[2] = 0; // FirstIndex
+		IndirectArgsBuffer[3] = 0; // firstVertex
+		IndirectArgsBuffer[4] = 0; // firstInstance
+	}
+	if(DispatchThreadId.x > InstanceCount) return;
+	InstanceOriginBuffer[DispatchThreadId.x] = float4(150 * DispatchThreadId.x, 0, 0, 1);
+	InstanceTransformBuffer[3 * DispatchThreadId.x + 0] = float4(1, 0, 0, 0);
+	InstanceTransformBuffer[3 * DispatchThreadId.x + 1] = float4(0, 1, 0, 0);
+	InstanceTransformBuffer[3 * DispatchThreadId.x + 2] = float4(0, 0, 1, 0);
+}

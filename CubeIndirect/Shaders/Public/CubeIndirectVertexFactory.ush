@@ -1,0 +1,233 @@
+#include "/Engine/Private/VertexFactoryCommon.ush"
+
+struct FVertexFactoryInput
+{
+	float3 Position : ATTRIBUTE0;
+	float2 TextureCoordinate : ATTRIBUTE1;
+	float3 Normal : ATTRIBUTE2;
+	float4 Tangent : ATTRIBUTE3;
+	uint VertexId : SV_VertexID;
+	uint DrawInstanceId : SV_InstanceID;
+
+};
+
+struct FPositionOnlyVertexFactoryInput
+{
+	float3 Position : ATTRIBUTE0;
+	uint VertexId : SV_VertexID;
+	uint DrawInstanceId : SV_InstanceID;
+};
+
+struct FPositionAndNormalOnlyVertexFactoryInput
+{
+	float3 Position : ATTRIBUTE0;
+	float3 Normal : ATTRIBUTE2;
+	uint VertexId : SV_VertexID;
+	uint DrawInstanceId : SV_InstanceID;
+};
+
+struct FVertexFactoryIntermediates
+{
+	float3 Position;
+	float2 TextureCoordinate;
+
+	float3x3 TangentToLocal;
+	float3x3 TangentToWorld;
+	float TangentSign;
+
+	float4 InstanceOrigin;
+	float4 InstanceTransform1;
+	float4 InstanceTransform2;
+	float4 InstanceTransform3;
+
+	FSceneDataIntermediates SceneData;
+	uint PrimitiveId;
+};
+
+struct FVertexFactoryInterpolantsVSToPS
+{
+	float4 TexCoords : TEXCOORD0;
+	float4 TangentToWorld0 : TEXCOORD1;
+	float4 TangentToWorld2 : TEXCOORD2;
+	uint PrimitiveId : TEXCOORD3;
+};
+
+float3x3 CalcTangentToLocal(FVertexFactoryInput Input, out float TangentSign)
+{
+	float3x3 Result;
+
+	float4 Tangent = TangentBias(Input.Tangent);
+	float3 Normal = TangentBias(Input.Normal);
+	TangentSign = Tangent.w;
+	float3 TangentY = cross(Tangent.xyz, Normal) * TangentSign;
+
+	Result[0] = cross(TangentY, Normal) * TangentSign;
+	Result[1] = TangentY;
+	Result[2] = Normal;
+	return Result;
+}
+
+float3x3 CalcTangentToWorldNoScale(FVertexFactoryIntermediates Intermediates, float3x3 TangentToLocal)
+{
+	float3x3 LocalToWorld = GetLocalToWorld3x3();
+	return mul(TangentToLocal, LocalToWorld);
+}
+
+
+float3x3 CalcTangentToWorld(FVertexFactoryIntermediates Intermediates, float3x3 TangentToLocal)
+{
+	return CalcTangentToWorldNoScale(Intermediates, TangentToLocal);
+}
+
+float4x4 GetInstanceTransform(FVertexFactoryIntermediates Intermediates)
+{
+	return float4x4(
+		float4(Intermediates.InstanceTransform1.xyz, 0.0f),
+		float4(Intermediates.InstanceTransform2.xyz, 0.0f),
+		float4(Intermediates.InstanceTransform3.xyz, 0.0f),
+		float4(Intermediates.InstanceOrigin.xyz, 1.0f));
+}
+
+float4x4 GetInstanceTransform(FPositionOnlyVertexFactoryInput Input)
+{
+	uint DrawInstanceId = GetInstanceId(Input.DrawInstanceId);
+	return float4x4(
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		CubeIndirectInstanceVF.InstanceOriginBuffer[DrawInstanceId]);
+}
+
+float4x4 GetInstanceTransform(FPositionAndNormalOnlyVertexFactoryInput Input)
+{
+	uint DrawInstanceId = GetInstanceId(Input.DrawInstanceId);
+	return float4x4(
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		float4(CubeIndirectInstanceVF.InstanceTransformBuffer[3 * (DrawInstanceId) + 0].xyz, 0.0f),
+		CubeIndirectInstanceVF.InstanceOriginBuffer[DrawInstanceId]);
+}
+
+/*
+float4 GetTangentToWorld2(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	
+}
+
+float4 GetTangentToWorld2(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	
+}
+*/
+
+
+
+uint GetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+#if VF_USE_PRIMITIVE_SCENE_DATA
+	return Interpolants.PrimitiveId;
+#else
+	return 0;
+#endif
+}
+
+float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
+	return float4(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation), PrimitiveData.ObjectRadius);
+}
+
+uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	return GetPrimitiveId(Interpolants);
+}
+
+FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
+{
+	FVertexFactoryIntermediates Intermediates = (FVertexFactoryIntermediates)0;
+	Intermediates.SceneData = GetSceneDataIntermediates();
+	Intermediates.Position = Input.Position;
+	Intermediates.TextureCoordinate = Input.TextureCoordinate;
+	Intermediates.PrimitiveId = 0;
+	float TangentSign;
+	Intermediates.TangentToLocal = CalcTangentToLocal(Input, TangentSign);
+	Intermediates.TangentToWorld = CalcTangentToWorld(Intermediates, Intermediates.TangentToLocal);
+	Intermediates.TangentSign = TangentSign;
+
+	uint DrawInstanceId = GetInstanceId(Input.DrawInstanceId);
+	Intermediates.InstanceOrigin = CubeIndirectInstanceVF.InstanceOriginBuffer[DrawInstanceId];
+	Intermediates.InstanceTransform1 = CubeIndirectInstanceVF.InstanceTransformBuffer[3 * DrawInstanceId + 0];
+	Intermediates.InstanceTransform2 = CubeIndirectInstanceVF.InstanceTransformBuffer[3 * DrawInstanceId + 1];
+	Intermediates.InstanceTransform3 = CubeIndirectInstanceVF.InstanceTransformBuffer[3 * DrawInstanceId + 2];
+
+	return Intermediates;
+}
+
+FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float3 worldPosition, float3x3 TangentToLocal, bool bIsPreviousFrame = false)
+{
+	FMaterialVertexParameters Result = (FMaterialVertexParameters)0;
+	Result.WorldPosition = worldPosition;
+	Result.TangentToWorld = Intermediates.TangentToWorld;
+	return Result;
+}
+
+FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVSToPS Interpolants, float4 svPosition)
+{
+	FMaterialPixelParameters Result = MakeInitializedMaterialPixelParameters();
+	Result.WorldNormal = Interpolants.TangentToWorld2.xyz;
+	Result.WorldTangent = Interpolants.TangentToWorld0.xyz;
+	Result.TangentToWorld = AssembleTangentToWorld(Interpolants.TangentToWorld0.xyz, Interpolants.TangentToWorld2);
+	return Result;
+}
+
+float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return TransformLocalToTranslatedWorld(mul(float4(Input.Position, 1.0f), GetInstanceTransform(Intermediates)).xyz);
+}
+
+float4 VertexFactoryGetWorldPosition(FPositionOnlyVertexFactoryInput Input)
+{
+	return TransformLocalToTranslatedWorld(mul(float4(Input.Position, 1.0f), GetInstanceTransform(Input)).xyz);
+}
+
+float4 VertexFactoryGetWorldPosition(FPositionAndNormalOnlyVertexFactoryInput Input)
+{
+	return TransformLocalToTranslatedWorld(mul(float4(Input.Position, 1.0f), GetInstanceTransform(Input)).xyz);
+}
+
+float4 VertexFactoryGetRasterizedWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, float4 TranslatedWorldPosition)
+{
+	return TranslatedWorldPosition;
+}
+
+FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, FMaterialVertexParameters VertexParameters)
+{
+	FVertexFactoryInterpolantsVSToPS Interpolants;
+	Interpolants.PrimitiveId = Intermediates.PrimitiveId;
+	Interpolants.TexCoords = float4(0,0,0,0);
+	Interpolants.TangentToWorld0 = float4(Intermediates.TangentToWorld[0], 0.0f);
+	Interpolants.TangentToWorld2 = float4(Intermediates.TangentToWorld[2], Intermediates.TangentSign);
+	return Interpolants;
+}
+
+float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return VertexFactoryGetWorldPosition(Input, Intermediates);
+}
+
+float3x3 VertexFactoryGetTangentToLocal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return Intermediates.TangentToLocal;
+}
+
+float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
+{
+	return Intermediates.TangentToWorld[2];
+}
+
+float3 VertexFactoryGetWorldNormal(FPositionAndNormalOnlyVertexFactoryInput Input)
+{
+	return Input.Normal;
+}
+
+#include "/Engine/Private/VertexFactoryDefaultInterface.ush"
